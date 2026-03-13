@@ -41,6 +41,8 @@ return [
 ## Commandline usage
 
 ```sh
-craft assetusage/default/delete-unused  # Deletes all unused assets.
-craft assetusage/default/list-unused    # Lists all unused assets.
+craft assetusage/default/delete-unused                    # Deletes all unused assets.
+craft assetusage/default/list-unused                      # Lists all unused assets.
+craft assetusage/default/delete-unused myVolume images    # Deletes unused assets under images/ and descendants.
+craft assetusage/default/list-unused myVolume images/team # Lists unused assets under images/team/ and descendants.
 ```

@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](http://keepachangelog.com/) and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## Unreleased
+
+### Changed
+
+- Console commands now accept a folder `path` argument that scopes cleanup/listing to that folder and its descendants
+
 ## 4.2.1 - 2026-02-08
 
 ### Updated
