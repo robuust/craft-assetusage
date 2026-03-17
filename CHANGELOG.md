@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/) and this p
 
 - Console commands now accept a folder `path` argument that scopes cleanup/listing to that folder and its descendants
 - Console commands now processes unused assets in batches and prints progress updates during long-running listing/deletions
+- PostgreSQL query now uses a set-based used-id query to avoid expensive per-asset JSONB scans
 
 ## 4.2.1 - 2026-02-08
 

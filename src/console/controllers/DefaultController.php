@@ -3,6 +3,7 @@
 namespace roelvanhintum\assetusage\console\controllers;
 
 use Craft;
+use yii\db\Expression;
 use craft\db\Query;
 use craft\db\Table;
 use craft\models\Volume;
@@ -109,34 +110,34 @@ class DefaultController extends Controller
             throw new InvalidArgumentException(sprintf('Unable to resolve folder by path "%s".', $path));
         }
 
-        $subQueryRelations = (new Query())
-            ->select('id')
-            ->from(['relations' => Table::RELATIONS])
-            ->where('[[relations.targetId]]=[[assets.id]]')
-            ->orWhere('[[relations.sourceId]]=[[assets.id]]');
-
-        $subQueryContent = (new Query())
-            ->select('elementId as id')
-            ->from(Table::ELEMENTS_SITES);
-
-        // PostgreSQL requires explicit casting for JSONB columns
-        if (Craft::$app->getDb()->getIsPgsql()) {
-            $subQueryContent
-                ->where("CAST(content AS TEXT) LIKE CONCAT('%asset:', assets.id, ':%')")
-                ->orWhere("CAST(content AS TEXT) LIKE CONCAT('%\"imageId\": \"', assets.id, '\",%')");
-        } else {
-            $subQueryContent
-                ->where("`content` LIKE CONCAT('%asset:', assets.id, ':%')")
-                ->orWhere("`content` LIKE CONCAT('%\"imageId\": \"', assets.id, '\",%')");
-        }
-
         $query = (new Query())
             ->select(['assets.id', 'assets.filename'])
             ->from(['assets' => Table::ASSETS])
             ->innerJoin(['elements' => Table::ELEMENTS], '[[elements.id]] = [[assets.id]]')
-            ->where(['elements.dateDeleted' => null])
-            ->andWhere(['not exists', $subQueryRelations])
-            ->andWhere(['not exists', $subQueryContent]);
+            ->where(['elements.dateDeleted' => null]);
+
+        if (Craft::$app->getDb()->getIsPgsql()) {
+            $query->andWhere(['not in', 'assets.id', $this->createPgsqlUsedAssetIdsQuery()]);
+        } else {
+            $subQueryRelations = (new Query())
+                ->select('id')
+                ->from(['relations' => Table::RELATIONS])
+                ->where('[[relations.targetId]]=[[assets.id]]')
+                ->orWhere('[[relations.sourceId]]=[[assets.id]]');
+
+            $subQueryContent = (new Query())
+                ->select('elementId as id')
+                ->from(Table::ELEMENTS_SITES);
+
+            // PostgreSQL requires explicit casting for JSONB columns
+            $subQueryContent
+                ->where("`content` LIKE CONCAT('%asset:', assets.id, ':%')")
+                ->orWhere("`content` LIKE CONCAT('%\"imageId\": \"', assets.id, '\",%')");
+            
+            $query
+                ->andWhere(['not exists', $subQueryRelations])
+                ->andWhere(['not exists', $subQueryContent]);
+        }
 
         if ($volumeModel !== null) {
             $query->andWhere(['assets.volumeId' => $volumeModel->id]);
@@ -153,6 +154,50 @@ class DefaultController extends Controller
         }
 
         return $query;
+    }
+
+    /**
+     * Build a PostgreSQL query that returns all asset ids used in relations/content.
+     *
+     * @return Query A query selecting a single `id` column with used asset ids.
+     */
+    private function createPgsqlUsedAssetIdsQuery(): Query
+    {
+        $relationTargetIds = (new Query())
+            ->select(['id' => 'targetId'])
+            ->from(Table::RELATIONS)
+            ->where(['not', ['targetId' => null]]);
+
+        $relationSourceIds = (new Query())
+            ->select(['id' => 'sourceId'])
+            ->from(Table::RELATIONS)
+            ->where(['not', ['sourceId' => null]]);
+
+        // We extract ids in a single pass-like set operation, instead of scanning content per asset.
+        $contentUsedIds = (new Query())
+            ->select('id')
+            ->from(new Expression(sprintf(
+                "(
+                    SELECT CAST(match[1] AS BIGINT) AS id
+                    FROM %s es
+                    CROSS JOIN LATERAL regexp_matches(es.content::text, 'asset:([0-9]+):', 'g') AS match
+                    UNION
+                    SELECT CAST(match[1] AS BIGINT) AS id
+                    FROM %s es
+                    CROSS JOIN LATERAL regexp_matches(es.content::text, '\"imageId\"\\\\s*:\\\\s*\"?([0-9]+)\"?', 'g') AS match
+                ) used_content_ids",
+                Table::ELEMENTS_SITES,
+                Table::ELEMENTS_SITES
+            )));
+
+        $usedIds = clone $relationTargetIds;
+        $usedIds->union($relationSourceIds);
+        $usedIds->union($contentUsedIds);
+
+        return (new Query())
+            ->select('id')
+            ->from(['used_ids' => $usedIds])
+            ->groupBy('id');
     }
 
     /**
