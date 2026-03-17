@@ -15,44 +15,73 @@ use yii\console\ExitCode;
  */
 class DefaultController extends Controller
 {
+    private const LIST_BATCH_SIZE = 250;
+    private const LIST_PROGRESS_INTERVAL = 500;
+    private const DELETE_BATCH_SIZE = 100;
+    private const DELETE_PROGRESS_INTERVAL = 100;
+
     /**
-     * Lists all unused assets.
-     * @param string|null $volume The handle of the asset's volume.
-     * @param string|null $path The asset folder path (for example: images/team or images/team/).
+     * List unused assets for an optional volume/folder scope.
+     *
+     * @param string|null $volume The volume handle to filter on.
+     * @param string|null $path The folder path to filter on (for example: images/team or images/team/).
+     * 
+     * @return int Exit code.
+     * @throws InvalidArgumentException When a non-null path cannot be resolved.
      */
     public function actionListUnused(?string $volume = null, ?string $path = null): int
     {
         $this->stdout('Listing all unused asset ids:' . PHP_EOL);
 
-        $results = $this->getUnusedAssets($volume, $path);
-        foreach ($results as $result) {
+        $query = $this->createUnusedAssetsQuery($volume, $path);
+        $listed = 0;
+
+        foreach ($query->each(self::LIST_BATCH_SIZE) as $result) {
+            $listed++;
             $this->stdout($result['id'] . ' : ' . $result['filename'] . PHP_EOL);
+
+            if ($listed % self::LIST_PROGRESS_INTERVAL === 0) {
+                $this->stdout("Progress: listed {$listed} unused assets..." . PHP_EOL);
+            }
         }
+
+        $this->stdout("Done. Listed {$listed} unused assets." . PHP_EOL);
 
         return ExitCode::OK;
     }
 
     /**
-     * Deletes all unused assets.
-     * @param string|null $volume The handle of the asset's volume.
-     * @param string|null $path The asset folder path (for example: images/team or images/team/).
+     * Delete unused assets for an optional volume/folder scope.
+     *
+     * @param string|null $volume The volume handle to filter on.
+     * @param string|null $path The folder path to filter on (for example: images/team or images/team/).
+     * 
+     * @return int Exit code.
+     * @throws InvalidArgumentException When a non-null path cannot be resolved.
      */
     public function actionDeleteUnused(?string $volume = null, ?string $path = null): int
     {
         $this->stdout('Deleting all unused asset ids:' . PHP_EOL);
 
-        $results = $this->getUnusedAssets($volume, $path);
-        $assetCount = count($results);
+        $assets = Craft::$app->getAssets();
+        $query = $this->createUnusedAssetsQuery($volume, $path);
+        $count = $this->getUnusedAssetCount($query);
 
-        if ($this->confirm("Delete $assetCount assets?")) {
-            $assets = Craft::$app->getAssets();
+        if ($this->confirm("Delete {$count} assets?")) {
+            $deleted = 0;
 
-            foreach ($results as $result) {
+            foreach ($query->each(self::DELETE_BATCH_SIZE) as $result) {
                 $this->stdout('Deleting ' . $result['id'] . ' : ' . $result['filename'] . PHP_EOL);
 
                 $asset = $assets->getAssetById($result['id']);
+                
                 if ($asset) {
                     Craft::$app->getElements()->deleteElement($asset);
+                }
+
+                $deleted++;
+                if ($deleted % self::DELETE_PROGRESS_INTERVAL === 0 || $deleted === $count) {
+                    $this->stdout("Progress: deleted {$deleted}/{$count} assets..." . PHP_EOL);
                 }
             }
 
@@ -63,11 +92,15 @@ class DefaultController extends Controller
     }
 
     /**
-     * @param string|null $volume The handle of the asset's volume.
-     * @param string|null $path The asset folder path. When set, results are limited to this folder and descendants.
-     * @return array<int, array{id: int, filename: string}>
+     * Build the query that selects unused assets.
+     *
+     * @param string|null $volume The volume handle to filter on.
+     * @param string|null $path The folder path to filter on.
+     * 
+     * @return Query The configured query selecting asset ids and filenames.
+     * @throws InvalidArgumentException When a non-null path cannot be resolved.
      */
-    private function getUnusedAssets(?string $volume = null, ?string $path = null): array
+    private function createUnusedAssetsQuery(?string $volume = null, ?string $path = null): Query
     {
         $volumeModel = $this->getVolumeByHandle($volume);
         $folder = $this->getFolderByPath($path, $volumeModel?->id);
@@ -119,7 +152,20 @@ class DefaultController extends Controller
             $query->andWhere(['in', 'assets.folderId', $descendantFolderIds]);
         }
 
-        return $query->all();
+        return $query;
+    }
+
+    /**
+     * Count rows produced by an unused-assets query.
+     *
+     * @param Query $query The base unused-assets query.
+     * @return int The number of matching assets.
+     */
+    private function getUnusedAssetCount(Query $query): int
+    {
+        $countQuery = clone $query;
+
+        return (int)$countQuery->count('*', Craft::$app->getDb());
     }
 
     /**
