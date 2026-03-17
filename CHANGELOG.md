@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/) and this p
 ### Changed
 
 - Console commands now accept a folder `path` argument that scopes cleanup/listing to that folder and its descendants
+- Console commands now processes unused assets in batches and prints progress updates during long-running listing/deletions
 
 ## 4.2.1 - 2026-02-08
 
